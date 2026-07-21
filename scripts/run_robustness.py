@@ -48,17 +48,30 @@ def _dataset(model: str, n: int, p: int, Sigma: np.ndarray, seed: int, extra: di
     return X, Y
 
 def run_once(model, p, n1, n2, rho, block, cov_kind, var_methods, B_list, seed,
-             decay, winsorize, n_jobs, extra, use_defaults=False, defaults_file="results/defaults.json"):
+             decay, winsorize, n_jobs, extra, use_defaults=False,
+             defaults_file="results/defaults.json", x_model=None):
+    """
+    One robustness replicate.
+
+    Group X ('null-side'): drawn from `x_model` (defaults to `model`) with
+    identity covariance. This matches the null-marginal to the alternative
+    so that any rejection under Sigma-block truth is a genuine signal, not
+    a marginal mismatch. To reproduce pre-Patch-2 behavior (X always
+    Gaussian regardless of Y), pass x_model="gaussian" explicitly.
+    """
     t0 = time.perf_counter()
     Sigma = _Sigma(cov_kind, p, rho=rho, block=block, decay=decay)
+    x_model = x_model or model
 
-    # Group 1 (null): size n1; Group 2 (signal): size n2 with Sigma
-    X1, _ = _dataset("gaussian", n1, p, np.eye(p), seed, {})     # null group ~ N(0, I)
-    _,  Y = _dataset(model,     n2, p, Sigma,      seed+12345, extra or {})
+    # Group 1 (null-side): size n1, identity covariance, marginal = x_model.
+    # Group 2 (signal-side): size n2 with block Sigma, marginal = model.
+    X1, _ = _dataset(x_model, n1, p, np.eye(p),   seed,       extra or {})
+    _,  Y = _dataset(model,   n2, p, Sigma,       seed+12345, extra or {})
 
     iu, ju = tri_pairs(p)
     truth = truth_mask_block(p, block)
-    row = {"model": model, "p": p, "n1": n1, "n2": n2, "rho": rho, "block": block,
+    row = {"model": model, "x_model": x_model,
+           "p": p, "n1": n1, "n2": n2, "rho": rho, "block": block,
            "cov_kind": cov_kind, "decay": decay, "seed": seed}
 
     # Fisher baselines
@@ -145,11 +158,13 @@ def main():
     ap.add_argument("--reps", type=int, default=30)
     ap.add_argument("--winsorize", type=float, default=None)
     ap.add_argument("--n-jobs", type=int, default=None)
-    # Day-12: defaults toggles
     ap.add_argument("--use-defaults", action="store_true",
                     help="Use results/defaults.json to auto-set (B, coarse_grid, winsorize, var_method) per (p, α).")
     ap.add_argument("--defaults-file", type=str, default="results/defaults.json",
                     help="Path to defaults.json (from scripts/make_defaults.py).")
+    ap.add_argument("--x-model", type=str, default=None,
+                    help="Marginal family for group X. Default: same as --model. "
+                         "Set 'gaussian' explicitly to reproduce pre-Patch-2 runs.")
     args = ap.parse_args()
 
     rhos = [float(x) for x in args.rho_list.split(",")]
@@ -183,7 +198,8 @@ def main():
                         cov_kind=args.cov_kind, var_methods=var_methods, B_list=B_list,
                         seed=seed, decay=args.decay, winsorize=args.winsorize,
                         n_jobs=n_jobs, extra=extra,
-                        use_defaults=bool(args.use_defaults), defaults_file=args.defaults_file
+                        use_defaults=bool(args.use_defaults), defaults_file=args.defaults_file,
+                        x_model=args.x_model,
                     ))
                     if (seed+1) % 5 == 0 or seed == 0:
                         print(f"[{args.model} p={args.p} cov={args.cov_kind} n1={n1} n2={n2} rho={rho}] rep {seed+1}/{args.reps}")
