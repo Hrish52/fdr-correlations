@@ -108,31 +108,52 @@ def lct_edge_stat(X: np.ndarray, Y: np.ndarray, var_method: str = "cai_liu", win
 
 def lct_threshold_normal(T: np.ndarray, alpha: float = 0.05):
     """
-    LCT-N threshold via normal tail FDR estimator:
-      est_fdr(t) ≈ M * q(t) / R(t), q(t)=2*(1-Phi(t)), M=#upper-tri edges
-    Pick smallest t with est_fdr(t) ≤ alpha (scan descending unique |T|).
-    Returns:
-      t_hat (float), reject_mask (1D bool for upper-tri order)
+    LCT-N threshold via the normal-tail FDR estimator (Cai & Liu, 2016, Eq. 9):
+
+        t_hat = inf { t in [0, b_p] : est_FDR(t) <= alpha }
+
+    where est_FDR(t) = M * q(t) / max(R(t), 1),
+          q(t)      = 2 * (1 - Phi(t)),
+          R(t)      = #{ |T_ij| >= t } on the upper-tri,
+          M         = p * (p - 1) / 2.
+
+    We scan the unique values of |T| in ascending order and return the FIRST
+    t at which est_FDR(t) <= alpha; that is the smallest qualifying threshold
+    and therefore yields the largest rejection set consistent with the FDR
+    bound. If no such t exists we return t_hat = np.inf and an empty mask.
+
+    Parameters
+    ----------
+    T : (p, p) ndarray
+        Symmetric edge statistic with zero diagonal.
+    alpha : float
+        Nominal FDR level in (0, 1).
+
+    Returns
+    -------
+    t_hat : float
+        Chosen threshold; np.inf if no threshold controls FDR at level alpha.
+    reject_mask : 1-D bool ndarray of length M = p*(p-1)/2
+        True at upper-tri edges whose |T_ij| >= t_hat.
     """
     p = T.shape[0]
     iu, ju = np.triu_indices(p, 1)
     absT = np.abs(T)[iu, ju]
-    if absT.size == 0:
+    M = absT.size
+    if M == 0:
         return np.inf, np.zeros(0, dtype=bool)
 
-    t_grid = np.unique(np.sort(absT))
-    q = lambda t: 2 * (1 - norm.cdf(t))
-    M = absT.size
+    t_grid = np.unique(np.sort(absT))  # ascending
+    q = lambda t: 2.0 * (1.0 - norm.cdf(t))
 
-    best_t, best_mask = None, None
-    for t in t_grid[::-1]:
-        R = (absT >= t).sum()
+    # Scan ascending: first t with est_FDR(t) <= alpha is the infimum.
+    for t in t_grid:
+        R = int((absT >= t).sum())
         if R == 0:
             continue
         est_fdr = (M * q(t)) / R
         if est_fdr <= alpha:
-            best_t = t
-            best_mask = (absT >= t)
-    if best_t is None:
-        return t_grid.max() + 1e-9, np.zeros_like(absT, dtype=bool)
-    return best_t, best_mask
+            return float(t), (absT >= t)
+
+    # No threshold in [min|T|, max|T|] controls FDR at level alpha.
+    return np.inf, np.zeros_like(absT, dtype=bool)

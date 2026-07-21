@@ -112,10 +112,13 @@ def lct_threshold_bootstrap_v2(
     with np.errstate(divide="ignore", invalid="ignore"):
         fdr_hat = (M * q_hat) / np.maximum(R_t, 1.0)
 
-    t_hat = None
+    # Scan ascending (Cai & Liu, 2016, Eq. 12): pick the smallest t with
+    # FDR_hat(t) <= alpha. This is the infimum, giving the largest
+    # rejection set consistent with the FDR bound.
     alpha = float(alpha)
-    for t, fdr_val in zip(t_grid[::-1], fdr_hat[::-1]):  # descending
-        R = (absT >= t).sum()
+    t_hat = None
+    for t, fdr_val in zip(t_grid, fdr_hat):
+        R = int((absT >= t).sum())
         if R == 0:
             continue
         if fdr_val <= alpha:
@@ -123,7 +126,8 @@ def lct_threshold_bootstrap_v2(
             break
 
     if t_hat is None:
-        t_hat = float(t_grid.max() + 1e-9)
+        # No threshold controls FDR at level alpha; reject nothing.
+        t_hat = float("inf")
         reject_mask = np.zeros_like(absT, dtype=bool)
     else:
         reject_mask = (absT >= t_hat)

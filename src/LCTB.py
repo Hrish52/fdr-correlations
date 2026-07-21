@@ -2,6 +2,16 @@
 import numpy as np
 from joblib import Parallel, delayed
 from src.LCT import lct_edge_stat
+"""
+LCT-B (bootstrap threshold) — original implementation.
+
+Implements Cai & Liu (2016), Sec. 2, Eq. (10)–(12): pooled-sample bootstrap
+under H0 to estimate the tail probability q*(t) = P*(|T*| >= t), then choose
+the threshold as the smallest t in the grid such that the estimated FDR
+M * q*(t) / R(t) is at most alpha.
+
+For a faster streaming implementation, see src.LCTB_v2.
+"""
 from scipy.stats import norm  # only for a fallback if needed
 
 def _compute_T_from_indices(pooled, idx1, idx2, var_method):
@@ -75,18 +85,22 @@ def lct_threshold_bootstrap(
     R_t = np.array([(absT >= t).sum() for t in t_grid], dtype=float)
     fdr_hat = (M * q_hat) / np.maximum(R_t, 1.0)
 
-    # choose the smallest t with FDR_hat <= alpha (scan from high to low |T|)
+    # Scan ascending (Cai & Liu, 2016, Eq. 12 / Sec. 2 discussion):
+    # pick the smallest t with FDR_hat(t) <= alpha. This is the infimum,
+    # giving the largest rejection set consistent with the FDR bound.
     t_hat, reject_mask = None, None
-    for t, fdr_val in zip(t_grid[::-1], fdr_hat[::-1]):  # descending
-        R = (absT >= t).sum()
+    for t, fdr_val in zip(t_grid, fdr_hat):
+        R = int((absT >= t).sum())
         if R == 0:
             continue
         if fdr_val <= alpha:
-            t_hat = t
+            t_hat = float(t)
             reject_mask = (absT >= t)
+            break
+
     if t_hat is None:
-        # no discoveries at desired FDR; return empty set
-        t_hat = t_grid.max() + 1e-9
+        # No threshold controls FDR at level alpha; reject nothing.
+        t_hat = float("inf")
         reject_mask = np.zeros_like(absT, dtype=bool)
 
     info = {
