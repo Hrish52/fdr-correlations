@@ -16,3 +16,12 @@ data/
 CheckList.docs
 "~$*.docx"
 "~$*.xlsx"
+
+# Word autosave scratch files
+~$*
+~WRL*.tmp
+*.tmp
+
+# Common OS junk
+.DS_Store
+Thumbs.db
