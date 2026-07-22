@@ -122,7 +122,7 @@ Every driver logs its grid and seeds; re-running with the same seed reproduces t
 ## Key methodological decisions
 
 *   **Null definition (Patch 2):** Non-Gaussian null runs draw both groups from the same marginal family with identity covariance, matching Cai & Liu's $H_0$ definition. Prior mixed-marginal behavior ($X$ Gaussian regardless of $Y$) is preserved as an ablation via `--x-model gaussian`.
-*   **Threshold selection (Patch 1):** All three implementations (LCT-N, LCT-B, LCT-B v2) return the infimum of $\{t : \text{est\_FDR}(t) \leq \alpha\}$ per Cai & Liu Eq. (9), by ascending scan with early return.
+*   **Threshold selection (Patch 1):** All three implementations (LCT-N, LCT-B, LCT-B v2) return the infimum of $\{t : \text{est}_{\text{FDR}}(t) \leq \alpha\}$ per Cai & Liu Eq. (9), by ascending scan with early return.
 *   **Bootstrap defaults:** `B=100` for $p \approx 250$; `B=200` for $p \geq 500$ or non-Gaussian marginals with noisy null control. Cai–Liu variance estimator by default; light winsorize (5) recommended for heavy-tailed data. Locked in `results/defaults.json` via `scripts/make_defaults.py`.
 *   **Windows-friendly parallelism:** All scripts default to `n_jobs=1` on Windows to avoid `joblib` spawn overhead. Linux/macOS get full parallelism automatically.
 
