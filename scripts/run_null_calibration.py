@@ -9,9 +9,10 @@ sys.path.insert(0, str(ROOT))
 from src.Simulate import sample_gaussian, sample_t, sample_laplace, sample_exp, truth_mask_block
 from src.LCT import lct_edge_stat, lct_threshold_normal
 try:
-    from src.LCTB_v2 import lct_threshold_bootstrap   # faster impl
+    from src.LCTB_v2 import lct_threshold_bootstrap, select_threshold_from_info   # faster impl
 except ImportError:
     from src.LCTB import lct_threshold_bootstrap      # fallback to original
+    from src.LCTB_v2 import select_threshold_from_info
 
 OUT = Path("results/tables")
 OUT.mkdir(parents=True, exist_ok=True)
@@ -102,14 +103,17 @@ def run_once(model, p, n1, n2, seed, alpha_list, B_list, var_method="cai_liu",
             f"R_over_M_lct_{alpha_s}": Rn / M,
         })
 
-    # LCT-B
+    # LCT-B -- bootstrap once per B, then select thresholds for every alpha
+    # from the cached tail. q_hat/fdr_hat do not depend on alpha.
     for B in B_list:
         tB = time.perf_counter()
+        _, _, info = lct_threshold_bootstrap(
+            X, Y, alpha=float(alpha_list[0]), B=B, var_method=var_method,
+            winsorize=winsorize, n_jobs=n_jobs, rng=seed
+        )
         for alpha_s in alpha_list:
-            a = float(alpha_s)  # cast to float for computation
-            t_b, mask_b, _ = lct_threshold_bootstrap(
-                X, Y, alpha=a, B=B, var_method=var_method, n_jobs=n_jobs, rng=seed
-            )
+            a = float(alpha_s)
+            t_b, mask_b = select_threshold_from_info(info, a)
             Rb = int(mask_b.sum())
             row.update({
                 f"t_lctb_{alpha_s}_B{B}": float(t_b),

@@ -46,6 +46,31 @@ def _boot_index_pairs(N: int, n1: int, n2: int, rng: np.random.Generator, replac
         idx2 = perm[n1:n1 + n2]
     return idx1, idx2
 
+def select_threshold_from_info(info: dict, alpha: float):
+    """
+    Select a threshold for a new alpha from a cached bootstrap result.
+
+    The bootstrap tail q_hat and hence fdr_hat = M*q_hat/max(R_t,1) do not
+    depend on alpha -- only the selection rule does. So a single
+    lct_threshold_bootstrap call can serve any number of alpha levels,
+    avoiding a full re-bootstrap per level.
+
+    Uses the same Cai-Liu Eq.(9) infimum semantics as the main routines:
+    the smallest grid point with R > 0 and fdr_hat <= alpha.
+
+    Returns (t_hat, reject_mask), matching the first two return values of
+    lct_threshold_bootstrap.
+    """
+    t_grid = info["t_grid"]
+    fdr_hat = info["fdr_hat"]
+    R_t = info["R_t"]
+    absT = info["absT"]
+
+    ok = (R_t > 0) & (fdr_hat <= float(alpha))
+    if ok.any():
+        t = float(t_grid[int(np.argmax(ok))])
+        return t, (absT >= t)
+    return float("inf"), np.zeros_like(absT, dtype=bool)
 
 def lct_threshold_bootstrap_v2(
     X: np.ndarray,
@@ -139,6 +164,7 @@ def lct_threshold_bootstrap_v2(
 
     info = {
         "t_grid": t_grid,
+        "absT": absT,
         "grid_len": int(t_grid.size),
         "q_hat": q_hat,
         "fdr_hat": fdr_hat,

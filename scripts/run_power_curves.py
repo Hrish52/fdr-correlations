@@ -10,9 +10,10 @@ from src.FisherBaselines import two_group_z_stat, pvals_from_Z, bh_threshold, by
 from src.Simulate import make_block_cov, sample_gaussian, sample_t, sample_laplace, sample_exp, upper_tri_pairs, truth_mask_block
 from src.LCT import lct_edge_stat, lct_threshold_normal
 try:
-    from src.LCTB_v2 import lct_threshold_bootstrap   # faster impl
+    from src.LCTB_v2 import lct_threshold_bootstrap, select_threshold_from_info   # faster impl
 except ImportError:
     from src.LCTB import lct_threshold_bootstrap      # fallback to original
+    from src.LCTB_v2 import select_threshold_from_info
 
 OUT = Path("results/tables")
 OUT.mkdir(parents=True, exist_ok=True)
@@ -79,12 +80,14 @@ def run_once(model="gaussian", p=250, n=80, rho=0.30, block=20, seed=0, extra=No
             f"fdr_lct_{alpha}": V / max(R, 1), f"power_lct_{alpha}": S / max(m1, 1),
         })
 
-    # LCT-B
+    # LCT-B -- bootstrap once per B, select for all alphas from cache
     for B in (B_list or []):
+        _, _, info = lct_threshold_bootstrap(
+            X, Y, alpha=0.05, B=B, var_method="cai_liu",
+            n_jobs=n_jobs, rng=seed, winsorize=winsorize
+        )
         for alpha in (0.05, 0.10):
-            t_b, mask_b, info_b = lct_threshold_bootstrap(
-                X, Y, alpha=alpha, B=B, var_method="cai_liu", n_jobs=n_jobs, rng=seed, winsorize=winsorize
-            )
+            t_b, mask_b = select_threshold_from_info(info, alpha)
             Rb = int(mask_b.sum()); Vb = int((~truth & mask_b).sum()); Sb = int((truth & mask_b).sum())
             m1 = int(truth.sum())
             row.update({

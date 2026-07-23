@@ -107,6 +107,7 @@ def lct_threshold_bootstrap(
 
     info = {
         "t_grid": t_grid,
+        "absT": absT,
         "q_hat": q_hat,
         "fdr_hat": fdr_hat,
         "R_t": R_t,
