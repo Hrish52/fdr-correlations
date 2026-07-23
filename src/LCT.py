@@ -143,17 +143,20 @@ def lct_threshold_normal(T: np.ndarray, alpha: float = 0.05):
     if M == 0:
         return np.inf, np.zeros(0, dtype=bool)
 
-    t_grid = np.unique(np.sort(absT))  # ascending
-    q = lambda t: 2.0 * (1.0 - norm.cdf(t))
+    t_grid = np.unique(absT)                      # ascending, deduplicated
+    absT_sorted = np.sort(absT)
 
-    # Scan ascending: first t with est_FDR(t) <= alpha is the infimum.
-    for t in t_grid:
-        R = int((absT >= t).sum())
-        if R == 0:
-            continue
-        est_fdr = (M * q(t)) / R
-        if est_fdr <= alpha:
-            return float(t), (absT >= t)
+    # Vectorized: rejection counts and normal-tail FDR over the entire grid
+    # at once. O(M log M) instead of an O(M^2) Python loop.
+    R_all = M - np.searchsorted(absT_sorted, t_grid, side="left")
+    q_all = 2.0 * (1.0 - norm.cdf(t_grid))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        fdr_all = (M * q_all) / np.maximum(R_all, 1)
 
-    # No threshold in [min|T|, max|T|] controls FDR at level alpha.
+    # Infimum: first grid point with R > 0 and est_FDR <= alpha.
+    ok = (R_all > 0) & (fdr_all <= alpha)
+    if ok.any():
+        t = float(t_grid[int(np.argmax(ok))])
+        return t, (absT >= t)
+
     return np.inf, np.zeros_like(absT, dtype=bool)

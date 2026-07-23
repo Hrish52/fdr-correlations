@@ -81,8 +81,10 @@ def lct_threshold_bootstrap(
     q_hat = np.asarray(q_hat)
 
     # 5) FDP estimate and threshold selection
-    # R(t) on original, FDR_hat(t) = M*q_hat(t) / max(R(t),1)
-    R_t = np.array([(absT >= t).sum() for t in t_grid], dtype=float)
+    # Vectorized rejection counts: sort once, then searchsorted over the whole
+    # grid. O(M log M) instead of the O(M^2) Python loop this replaces.
+    _absT_sorted = np.sort(absT)
+    R_t = (M - np.searchsorted(_absT_sorted, t_grid, side="left")).astype(float)
     fdr_hat = (M * q_hat) / np.maximum(R_t, 1.0)
 
     # Scan ascending (Cai & Liu, 2016, Eq. 12 / Sec. 2 discussion):

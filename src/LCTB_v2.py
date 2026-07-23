@@ -108,7 +108,10 @@ def lct_threshold_bootstrap_v2(
     t3 = time.perf_counter()
 
     # 4) FDP estimate and threshold selection
-    R_t = np.array([(absT >= t).sum() for t in t_grid], dtype=float)
+    # Vectorized rejection counts: sort once, then searchsorted over the whole
+    # grid. O(M log M) instead of the O(M^2) Python loop this replaces.
+    _absT_sorted = np.sort(absT)
+    R_t = (M - np.searchsorted(_absT_sorted, t_grid, side="left")).astype(float)
     with np.errstate(divide="ignore", invalid="ignore"):
         fdr_hat = (M * q_hat) / np.maximum(R_t, 1.0)
 
