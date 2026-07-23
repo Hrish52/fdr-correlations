@@ -77,7 +77,7 @@ def main():
     ap.add_argument("--winsorize", type=float, default=None, help="Recorded default (e.g., 5).")
     ap.add_argument("--var-method", type=str, default="cai_liu",
         choices=["cai_liu","gaussian","jackknife"])
-    ap.add_argument("--coarse-grid-when-p-ge", type=int, default=500)
+    ap.add_argument("--coarse-grid-when-p-ge", type=int, default=None)
     ap.add_argument("--coarse-grid-K", type=int, default=200)
     ap.add_argument("--outfile", type=str, default=str(OUTFILE))
     args = ap.parse_args()

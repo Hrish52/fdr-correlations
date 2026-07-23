@@ -112,7 +112,13 @@ def lct_threshold_bootstrap_v2(
         t_grid = np.unique(np.sort(absT))
     else:
         K = max(10, int(coarse_grid))
-        qs = np.linspace(0.0, 1.0, K + 2, endpoint=True)[1:-1]  # drop 0 and 1
+        # Geometric spacing in tail probability: the FDR threshold sits at
+        # roughly the (1 - alpha*m1/M) quantile, which for large M is far
+        # beyond what uniform quantiles reach. Space log-uniformly in the
+        # tail fraction so resolution concentrates where t_hat actually is.
+        lo = 1.0 / absT.size          # finest resolvable tail fraction
+        tail_fracs = np.geomspace(lo, 0.5, K)
+        qs = 1.0 - tail_fracs
         t_grid = np.unique(np.quantile(absT, qs))
     t1 = time.perf_counter()
 
