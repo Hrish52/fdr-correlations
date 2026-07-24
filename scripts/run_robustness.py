@@ -15,9 +15,10 @@ from src.Simulate import (
 )
 from src.LCT import lct_edge_stat, lct_threshold_normal
 try:
-    from src.LCTB_v2 import lct_threshold_bootstrap   # faster impl
+    from src.LCTB_v2 import lct_threshold_bootstrap as lctb, select_threshold_from_info
 except ImportError:
-    from src.LCTB import lct_threshold_bootstrap      # fallback to original
+    from src.LCTB import lct_threshold_bootstrap as lctb
+    from src.LCTB_v2 import select_threshold_from_info
 
 from src.defaults import get_defaults_for
 
@@ -114,15 +115,14 @@ def run_once(model, p, n1, n2, rho, block, cov_kind, var_methods, B_list, seed,
     if use_defaults and not eff_B_list:
         eff_B_list = [-1]  # sentinel -> resolve per α from defaults.json
 
+    _cache = {}
     for B in eff_B_list:
         for a in (0.05, 0.10):
             vm = var_methods[0] if var_methods else "cai_liu"
-            wins = winsorize
-            kwargs_extra = {}
-            B_eff = B
+            wins, kwargs_extra, B_eff = winsorize, {}, B
             if use_defaults and B == -1:
-                d = (get_defaults_for(p, a, path=defaults_file) or {})
-                if "B" in d and d["B"] is not None:
+                d = get_defaults_for(p, a, path=defaults_file) or {}
+                if d.get("B") is not None:
                     B_eff = int(d["B"])
                 if d.get("coarse_grid") is not None:
                     kwargs_extra["coarse_grid"] = int(d["coarse_grid"])
@@ -131,10 +131,14 @@ def run_once(model, p, n1, n2, rho, block, cov_kind, var_methods, B_list, seed,
                 if d.get("var_method"):
                     vm = str(d["var_method"])
 
-            t_b, mask_b, _ = lct_threshold_bootstrap(
-                X1, Y, alpha=a, B=B_eff, var_method=vm,
-                winsorize=wins, n_jobs=n_jobs, rng=seed, **kwargs_extra
-            )
+            key = (B_eff, vm, wins, kwargs_extra.get("coarse_grid"))
+            if key not in _cache:
+                _, _, _cache[key] = lct_threshold_bootstrap(
+                    X1, Y, alpha=a, B=B_eff, var_method=vm,
+                    winsorize=wins, n_jobs=n_jobs, rng=seed, **kwargs_extra
+                )
+            t_b, mask_b = select_threshold_from_info(_cache[key], a)
+
             Rb = int(mask_b.sum()); Vb = int((~truth & mask_b).sum()); Sb = int((truth & mask_b).sum())
             m1 = int(truth.sum())
             row.update({

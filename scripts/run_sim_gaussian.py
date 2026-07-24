@@ -23,11 +23,12 @@ from src.Simulate import (
 )
 from src.LCT import lct_edge_stat, lct_threshold_normal
 try:
-    from src.LCTB_v2 import lct_threshold_bootstrap as lctb  # Day-11 fast path
+    from src.LCTB_v2 import lct_threshold_bootstrap as lctb, select_threshold_from_info
 except ImportError:
     from src.LCTB import lct_threshold_bootstrap as lctb
+    from src.LCTB_v2 import select_threshold_from_info
 
-from src.defaults import get_defaults_for  # Day-12 defaults resolver
+from src.defaults import get_defaults_for  
 
 OUT = Path("results/tables")
 OUT.mkdir(parents=True, exist_ok=True)
@@ -141,16 +142,17 @@ def run_once(model="gaussian", p=250, n1=80, n2=80, rho=0.30, block=20, seed=0, 
     if _USE_DEFAULTS and _B_LIST is None:
         B_list = [-1]
 
+    # Bootstrap once per resolved parameter tuple, then select a threshold
+    # for each alpha from the cached tail. q_hat does not depend on alpha,
+    # but --use-defaults can vary B/coarse_grid/winsorize/var_method with
+    # it, so the cache is keyed by the full resolved configuration.
+    _cache = {}
     for B in B_list:
         for alpha in (0.05, 0.10):
-            # Resolve defaults (only if requested and using sentinel)
-            var_method = "cai_liu"
-            wins = None
-            kwargs_extra = {}
-            B_eff = B
+            var_method, wins, kwargs_extra, B_eff = "cai_liu", None, {}, B
             if _USE_DEFAULTS and _B_LIST is None:
                 d = get_defaults_for(p, alpha, path=_DEFAULTS_FILE) or {}
-                if "B" in d and d["B"] is not None:
+                if d.get("B") is not None:
                     B_eff = int(d["B"])
                 if d.get("coarse_grid") is not None:
                     kwargs_extra["coarse_grid"] = int(d["coarse_grid"])
@@ -159,20 +161,22 @@ def run_once(model="gaussian", p=250, n1=80, n2=80, rho=0.30, block=20, seed=0, 
                 if d.get("var_method"):
                     var_method = str(d["var_method"])
 
-            # Call LCT-B
-            t_b, mask_b, info_b = lctb(
-                X, Y, alpha=alpha, B=B_eff, var_method=var_method,
-                winsorize=wins, n_jobs=_N_JOBS, rng=seed, **kwargs_extra
-            )
+            key = (B_eff, var_method, wins, kwargs_extra.get("coarse_grid"))
+            if key not in _cache:
+                _, _, _cache[key] = lctb(
+                    X, Y, alpha=alpha, B=B_eff, var_method=var_method,
+                    winsorize=wins, n_jobs=_N_JOBS, rng=seed, **kwargs_extra
+                )
+            t_b, mask_b = select_threshold_from_info(_cache[key], alpha)
 
-            # Tally results
             Rb = int(mask_b.sum())
             Vb = int((~truth & mask_b).sum())
             Sb = int((truth & mask_b).sum())
             m1 = int(truth.sum())
             row.update({
                 f"t_lctb_{alpha}_B{B_eff}": float(t_b),
-                f"R_lctb_{alpha}_B{B_eff}": Rb, f"V_lctb_{alpha}_B{B_eff}": Vb, f"S_lctb_{alpha}_B{B_eff}": Sb,
+                f"R_lctb_{alpha}_B{B_eff}": Rb, f"V_lctb_{alpha}_B{B_eff}": Vb,
+                f"S_lctb_{alpha}_B{B_eff}": Sb,
                 f"fdr_lctb_{alpha}_B{B_eff}": Vb / max(Rb, 1),
                 f"power_lctb_{alpha}_B{B_eff}": Sb / max(m1, 1),
             })
