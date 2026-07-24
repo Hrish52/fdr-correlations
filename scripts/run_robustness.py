@@ -10,7 +10,8 @@ from src.FisherBaselines import two_group_z_stat, pvals_from_Z, bh_threshold, by
 from src.Simulate import (
     sample_gaussian, sample_t, sample_laplace, sample_exp,
     sample_t_cl, sample_exp_cl, sample_normal_mixture,
-    truth_mask_block
+    make_block_cov, make_block_ar1_cov, make_block_decay_cov,
+    truth_mask_block, upper_tri_pairs
 )
 from src.LCT import lct_edge_stat, lct_threshold_normal
 try:
@@ -18,7 +19,7 @@ try:
 except ImportError:
     from src.LCTB import lct_threshold_bootstrap      # fallback to original
 
-from src.defaults import get_defaults_for  # Day-12: resolver for results/defaults.json
+from src.defaults import get_defaults_for
 
 OUT = Path("results/tables"); OUT.mkdir(parents=True, exist_ok=True)
 _IU = {}
@@ -33,25 +34,23 @@ def _Sigma(kind: str, p: int, rho: float, block: int, decay: float):
     raise ValueError(f"Unknown cov-kind: {kind}")
 
 def _dataset(model: str, n: int, p: int, Sigma: np.ndarray, seed: int, extra: dict):
-    rng = np.random.default_rng(seed)
-    X = rng.normal(size=(n, p))  # null group
+    """Draw n samples with covariance Sigma and the given marginal family."""
     if model == "gaussian":
-        Y = sample_gaussian(n, Sigma, seed=seed)
+        return sample_gaussian(n, Sigma, seed=seed)
     elif model == "t":
-        Y = sample_t(n, df=extra.get("df", 6), Sigma=Sigma, rng=seed)
+        return sample_t(n, df=extra.get("df", 6), Sigma=Sigma, rng=seed)
     elif model == "laplace":
-        Y = sample_laplace(n, b=extra.get("b", 1/np.sqrt(2)), Sigma=Sigma, rng=seed)
+        return sample_laplace(n, b=extra.get("b", 1/np.sqrt(2)), Sigma=Sigma, rng=seed)
     elif model == "exp":
-        Y = sample_exp(n, rate=extra.get("rate", 1.0), Sigma=Sigma, rng=seed, zscore=True)
+        return sample_exp(n, rate=extra.get("rate", 1.0), Sigma=Sigma, rng=seed, zscore=True)
     elif model == "t_cl":
-        Y = sample_t_cl(n, df=extra.get("df", 6), Sigma=Sigma, rng=seed)
+        return sample_t_cl(n, df=extra.get("df", 6), Sigma=Sigma, rng=seed)
     elif model == "exp_cl":
-        Y = sample_exp_cl(n, rate=extra.get("rate", 1.0), Sigma=Sigma, rng=seed)
+        return sample_exp_cl(n, rate=extra.get("rate", 1.0), Sigma=Sigma, rng=seed)
     elif model == "nmix":
-        Y = sample_normal_mixture(n, Sigma=Sigma, rng=seed)
+        return sample_normal_mixture(n, Sigma=Sigma, rng=seed)
     else:
         raise ValueError(f"Unknown model: {model}")
-    return X, Y
 
 def run_once(model, p, n1, n2, rho, block, cov_kind, var_methods, B_list, seed,
              decay, winsorize, n_jobs, extra, use_defaults=False,
@@ -59,20 +58,18 @@ def run_once(model, p, n1, n2, rho, block, cov_kind, var_methods, B_list, seed,
     """
     One robustness replicate.
 
-    Group X ('null-side'): drawn from `x_model` (defaults to `model`) with
-    identity covariance. This matches the null-marginal to the alternative
-    so that any rejection under Sigma-block truth is a genuine signal, not
-    a marginal mismatch. To reproduce pre-Patch-2 behavior (X always
-    Gaussian regardless of Y), pass x_model="gaussian" explicitly.
+    Group X ('null-side'): identity covariance, marginal = x_model
+    (defaults to model). Group Y ('signal-side'): block Sigma, marginal =
+    model. Matching the marginals by default is required for H0 to mean
+    what Cai-Liu Eq. (2) says. Pass x_model="gaussian" to reproduce
+    pre-Patch-2 behaviour.
     """
     t0 = time.perf_counter()
     Sigma = _Sigma(cov_kind, p, rho=rho, block=block, decay=decay)
     x_model = x_model or model
 
-    # Group 1 (null-side): size n1, identity covariance, marginal = x_model.
-    # Group 2 (signal-side): size n2 with block Sigma, marginal = model.
-    X1, _ = _dataset(x_model, n1, p, np.eye(p),   seed,       extra or {})
-    _,  Y = _dataset(model,   n2, p, Sigma,       seed+12345, extra or {})
+    X1 = _dataset(x_model, n1, p, np.eye(p), seed,       extra or {})
+    Y  = _dataset(model,   n2, p, Sigma,     seed+12345, extra or {})
 
     iu, ju = tri_pairs(p)
     truth = truth_mask_block(p, block)
@@ -151,7 +148,8 @@ def run_once(model, p, n1, n2, rho, block, cov_kind, var_methods, B_list, seed,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", type=str, default="gaussian", help="gaussian|t|laplace|exp")
+    ap.add_argument("--model", type=str, default="gaussian",
+                    help="gaussian|t|laplace|exp|t_cl|exp_cl|nmix")
     ap.add_argument("--p", type=int, default=250)
     ap.add_argument("--rho-list", type=str, default="0.60,0.70")
     ap.add_argument("--n1-list", type=str, default="80,120")
@@ -182,7 +180,6 @@ def main():
         B_list = [int(x) for x in args.B_list.split(",")]
     else:
         B_list = [100, 200] if args.p == 250 else [50, 100]
-    # If using defaults and no explicit B_list, let run_once resolve per α
     if args.use_defaults and not args.B_list:
         B_list = []
 
@@ -190,9 +187,9 @@ def main():
     n_jobs = 1 if (win and args.n_jobs is None) else (args.n_jobs if args.n_jobs is not None else -1)
 
     extra = {}
-    if args.model == "t":       extra = {"df": 6}
-    if args.model == "laplace": extra = {"b": 1/np.sqrt(2)}
-    if args.model == "exp":     extra = {"rate": 1.0}
+    if args.model in ("t", "t_cl"):     extra = {"df": 6}
+    if args.model == "laplace":         extra = {"b": 1/np.sqrt(2)}
+    if args.model in ("exp", "exp_cl"): extra = {"rate": 1.0}
 
     for n1 in n1s:
         for n2 in n2s:
