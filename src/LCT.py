@@ -16,11 +16,22 @@ def _corr_from_z(Xz: np.ndarray) -> np.ndarray:
     np.fill_diagonal(R, 1.0)
     return np.clip(R, -0.999999, 0.999999)
 
-def _var_r_gaussian_approx(R: np.ndarray, n: int) -> np.ndarray:
-    # Var(r_ij) ≈ (1 - r_ij^2)^2 / (n - 1)   (fast; good under elliptical/Gaussian)
-    V = (1.0 - R**2)**2 / max(n - 1, 1)
-    np.fill_diagonal(V, 0.0)
-    return V
+def _kappa_hat(Xz: np.ndarray) -> float:
+    """
+    Cai-Liu kurtosis parameter (Sec. 2):
+
+        kappa = (1/3) E(X_i - mu_i)^4 / [E(X_i - mu_i)^2]^2
+
+    estimated by averaging the standardised fourth moment over the p
+    columns. Equals 1 for Gaussian data, larger for heavy tails.
+    Scale-invariant, so computing it on z-scored columns is equivalent
+    to the paper's raw-scale formula.
+    """
+    n = Xz.shape[0]
+    s2 = (Xz ** 2).sum(axis=0)
+    m4 = (Xz ** 4).sum(axis=0)
+    ratio = n * m4 / np.maximum(s2 ** 2, 1e-300)
+    return float(np.mean(ratio) / 3.0)
 
 def _var_r_jackknife(Xz: np.ndarray, R: np.ndarray) -> np.ndarray:
     # Jackknife variance for r_ij (more robust, slower: O(n p^2)). Use for small p.
@@ -39,39 +50,64 @@ def _var_r_jackknife(Xz: np.ndarray, R: np.ndarray) -> np.ndarray:
     np.fill_diagonal(V, 0.0)
     return V
 
-def _var_r_cai_liu(Xz: np.ndarray) -> np.ndarray:
+def _rho_tilde_sq(R1, R2, kappa1, kappa2, n1, n2, p):
     """
-    Cai–Liu style plug-in variance for Pearson r using 2nd/4th moments:
-      Let u_k = z_{ki} z_{kj}.
-      A = E[u] ≈ (Xz^T Xz)/n
-      B = E[u^2] ≈ ((Xz^2)^T (Xz^2))/n
-      Var(u) ≈ B - A^2
-      Var(r_ij) ≈ Var(u)/n = (B - A^2)/n
+    Thresholded sample correlations (Cai-Liu Sec. 2, paragraph after Eq. 5):
+
+        rho_tilde_ijl = rho_hat_ijl * I{ |rho_hat_ijl| / sqrt(kappa_l/n_l
+                        * (1-rho_hat_ijl^2)^2) >= 2 sqrt(log p)}
+
+    then rho_tilde^2_ij = max(rho_tilde^2_ij1, rho_tilde^2_ij2), which is
+    substituted for BOTH rho^2_ij1 and rho^2_ij2 in Eq. (4). Using the max
+    shrinks the denominator under the alternative, which is what makes T
+    more powerful than the naive per-group plug-in.
     """
-    n = Xz.shape[0]
-    A = (Xz.T @ Xz) / n
-    X2 = Xz**2
-    B = (X2.T @ X2) / n
-    V = (B - A**2) / n
-    V = np.maximum(V, 0.0)   # numeric safety
-    np.fill_diagonal(V, 0.0)
-    return V
+    def _thr(R, kappa, n):
+        se = np.sqrt(kappa / n) * (1.0 - R ** 2)
+        stat = np.abs(R) / np.maximum(se, 1e-300)
+        keep = stat >= 2.0 * np.sqrt(np.log(max(p, 2)))
+        return np.where(keep, R, 0.0)
+
+    return np.maximum(_thr(R1, kappa1, n1) ** 2, _thr(R2, kappa2, n2) ** 2)
 
 # ---------- main API ----------
 
 def lct_edge_stat(X: np.ndarray, Y: np.ndarray, var_method: str = "cai_liu", winsorize=None):
     """
-    LCT-style statistic (LCT-N/LCT-B backbone):
-        T_ij = (r1_ij - r2_ij) / sqrt( Var(r1_ij) + Var(r2_ij) )
+    Cai-Liu (2016) Eq. (4)-(5) edge statistic for H_0,ij: rho_ij1 = rho_ij2.
 
-    var_method: "cai_liu" (moment plug-in), "gaussian" (approx), "jackknife" (robust, slower)
-    winsorize: if not None, clip standardized entries in X and Y to [-winsorize, winsorize]
-               (use values like 5 or 6 under heavy tails; default None leaves data unchanged)
+        T_ij = (r1 - r2) / sqrt( k1/n1 * (1-rt^2)^2 + k2/n2 * (1-rt^2)^2 )
 
-    Returns:
-        T  : (p,p) symmetric matrix, 0 diagonal
-        R1 : (p,p) correlations for X
-        R2 : (p,p) correlations for Y
+    where k_l is the kurtosis parameter (1 for Gaussian, larger for heavy
+    tails) estimated per group, and rt^2 = max of the two thresholded
+    sample correlations. Both matter: k_l is what Fisher-z implicitly
+    assumes is 1, and the max in rt^2 shrinks the denominator under the
+    alternative, which is what gives T its power advantage.
+
+    Under H_0 and condition (C2), T_ij is asymptotically N(0,1).
+
+    Parameters
+    ----------
+    X, Y : (n1, p), (n2, p) ndarray
+    var_method : {"cai_liu", "gaussian", "jackknife"}
+        "cai_liu"   - Eq. (4) with kappa estimated from the data.
+        "gaussian"  - same, kappa forced to 1 (ablation; anticonservative
+                      under heavy tails).
+        "jackknife" - assumption-free but O(n p^2); small p only.
+    winsorize : float or None
+        Clip standardised entries to [-c, c] before correlating. Not part
+        of Cai-Liu; an empirical robustness knob (try ~5 for heavy tails).
+
+    Returns
+    -------
+    T : (p, p) statistics, zero diagonal
+    R1, R2 : (p, p) sample correlation matrices
+
+    Notes
+    -----
+    A variance formula correct only at rho=0 passes null calibration while
+    destroying power, since nulls sit near rho=0 and alternatives do not.
+    See docs/patches/patch10 and the nonzero-common-rho test.
     """
     # z-score columns
     Xz = _zscore_columns(X)
@@ -88,12 +124,19 @@ def lct_edge_stat(X: np.ndarray, Y: np.ndarray, var_method: str = "cai_liu", win
     R2 = _corr_from_z(Yz)
 
     # per-edge variances
-    if var_method == "cai_liu":
-        V1 = _var_r_cai_liu(Xz)
-        V2 = _var_r_cai_liu(Yz)
-    elif var_method == "gaussian":
-        V1 = _var_r_gaussian_approx(R1, X.shape[0])
-        V2 = _var_r_gaussian_approx(R2, Y.shape[0])
+    if var_method in ("cai_liu", "gaussian"):
+        n1, n2 = Xz.shape[0], Yz.shape[0]
+        p = Xz.shape[1]
+        if var_method == "cai_liu":
+            k1, k2 = _kappa_hat(Xz), _kappa_hat(Yz)
+        else:                       # 'gaussian': assume kappa = 1
+            k1 = k2 = 1.0
+        rt2 = _rho_tilde_sq(R1, R2, k1, k2, n1, n2, p)
+        shared = (1.0 - rt2) ** 2
+        V1 = (k1 / n1) * shared
+        V2 = (k2 / n2) * shared
+        np.fill_diagonal(V1, 0.0)
+        np.fill_diagonal(V2, 0.0)
     elif var_method == "jackknife":
         V1 = _var_r_jackknife(Xz, R1)
         V2 = _var_r_jackknife(Yz, R2)
