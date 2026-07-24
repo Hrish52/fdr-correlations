@@ -2,6 +2,7 @@ import numpy as np
 from src.Simulate import make_block_cov, sample_t, sample_laplace, sample_exp
 from src.Simulate import sample_t_cl, sample_exp_cl, sample_normal_mixture
 from src.LCT import _kappa_hat, _zscore_columns
+from src.Simulate import make_model2_covs, truth_mask_model2
 
 def _basic_checks(X):
     assert X.ndim == 2
@@ -47,3 +48,12 @@ def test_normal_mixture_kappa_exceeds_one():
     X = sample_normal_mixture(n, np.eye(p), rng=0)
     k = _kappa_hat(_zscore_columns(X))
     assert 1.4 < k < 2.4, f"kappa {k:.3f}, expected ~1.8"
+
+def test_model2_truth_mask_matches_covariances():
+    """The truth mask must agree with where the two covariances differ."""
+    p, m1, m2 = 240, 80, 40
+    S1, S2 = make_model2_covs(p, rho=0.6, m1=m1, m2=m2)
+    iu, ju = np.triu_indices(p, 1)
+    differs = ~np.isclose(S1[iu, ju], S2[iu, ju])
+    assert np.array_equal(differs, truth_mask_model2(p, m1, m2))
+    assert differs.sum() > 0

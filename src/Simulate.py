@@ -167,3 +167,38 @@ def sample_normal_mixture(n: int, Sigma: np.ndarray, rng=None) -> np.ndarray:
     Z = rng.normal(size=(n, p)) @ L.T
     U = rng.uniform(0.0, 1.0, size=(n, 1))
     return U * Z
+
+def make_model2_covs(p: int, rho: float = 0.6, m1: int = 80, m2: int = 40):
+    """
+    Cai-Liu (2016) Sec. 5.1 Model 2: two block-diagonal covariances with
+    DIFFERENT block sizes, so the differential correlation matrix has many
+    non-zero entries.
+
+    Group 1: blocks of size m1, off-diagonal rho.
+    Group 2: blocks of size m2, off-diagonal rho.
+
+    Their Model 2 uses (m1, m2) = (80, 40) with rho = 0.6, giving a much
+    stronger and denser signal than Model 1. Returns (Sigma1, Sigma2).
+    """
+    def _blocks(m):
+        S = np.eye(p, dtype=float)
+        nb = p // m
+        for k in range(nb):
+            lo, hi = k * m, (k + 1) * m
+            S[lo:hi, lo:hi] = rho
+        np.fill_diagonal(S, 1.0)
+        return S
+
+    return _blocks(m1), _blocks(m2)
+
+
+def truth_mask_model2(p: int, m1: int = 80, m2: int = 40) -> np.ndarray:
+    """
+    Upper-triangular truth mask for Model 2: an edge is a true discovery
+    iff its correlation differs between the two groups, i.e. it is inside
+    a block for exactly one of the two block sizes.
+    """
+    iu, ju = upper_tri_pairs(p)
+    in1 = (iu // m1) == (ju // m1)
+    in2 = (iu // m2) == (ju // m2)
+    return in1 != in2
