@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 from src.FisherBaselines import two_group_z_stat, pvals_from_Z, bh_threshold, by_threshold
 from src.Simulate import (
     make_block_cov, sample_gaussian, sample_t, sample_laplace, sample_exp,
+    sample_t_cl, sample_exp_cl, sample_normal_mixture,
     upper_tri_pairs, truth_mask_block
 )
 from src.LCT import lct_edge_stat, lct_threshold_normal
@@ -42,32 +43,38 @@ def tri_pairs(p: int):
 _SKIP_LCTB = False
 _B_LIST = None
 _N_JOBS = -1
-# Day-12: defaults toggles
 _USE_DEFAULTS = False
 _DEFAULTS_FILE = "results/defaults.json"
+_X_MODEL = None
 
-def _dataset(model: str, n1: int, n2: int, p: int, rho: float, block: int, seed: int, extra: dict):
-    """
-    Return X (null group ~ N(0, I)) and Y with dependence per `model`,
-    using same top-left block Sigma for fair truth.
-    """
-    rng = np.random.default_rng(seed)
-    X = rng.normal(size=(n1, p))
-    Sigma = make_block_cov(p, rho=rho, block_size=block)
-
+def _sample(model, n, p, Sigma, seed, extra):
     if model == "gaussian":
-        Y = sample_gaussian(n2, Sigma, seed=seed)
-    elif model == "t":
-        Y = sample_t(n2, df=extra.get("df", 6), Sigma=Sigma, rng=seed)
-    elif model == "laplace":
-        b = extra.get("b", 1/np.sqrt(2))  # unit variance Laplace
-        Y = sample_laplace(n2, b=b, Sigma=Sigma, rng=seed)
-    elif model == "exp":
-        rate = extra.get("rate", 1.0)
-        Y = sample_exp(n2, rate=rate, Sigma=Sigma, rng=seed, zscore=True)
-    else:
-        raise ValueError(f"Unknown model: {model}")
+        return sample_gaussian(n, Sigma, seed=seed)
+    if model == "t":
+        return sample_t(n, df=extra.get("df", 6), Sigma=Sigma, rng=seed)
+    if model == "laplace":
+        return sample_laplace(n, b=extra.get("b", 1/np.sqrt(2)), Sigma=Sigma, rng=seed)
+    if model == "exp":
+        return sample_exp(n, rate=extra.get("rate", 1.0), Sigma=Sigma, rng=seed, zscore=True)
+    if model == "t_cl":
+        return sample_t_cl(n, df=extra.get("df", 6), Sigma=Sigma, rng=seed)
+    if model == "exp_cl":
+        return sample_exp_cl(n, rate=extra.get("rate", 1.0), Sigma=Sigma, rng=seed)
+    if model == "nmix":
+        return sample_normal_mixture(n, Sigma=Sigma, rng=seed)
+    raise ValueError(f"Unknown model: {model}")
 
+def _dataset(model, n1, n2, p, rho, block, seed, extra, x_model=None):
+    """
+    Group X: identity covariance, marginal = x_model (defaults to model).
+    Group Y: block covariance, marginal = model.
+    Matching the marginals by default is required for H0 to mean what
+    Cai-Liu Eq. (2) says it means -- see docs/patches/patch02.
+    """
+    x_model = x_model or model
+    Sigma = make_block_cov(p, rho=rho, block_size=block)
+    X = _sample(x_model, n1, p, np.eye(p), seed, extra)
+    Y = _sample(model,   n2, p, Sigma,     seed + 10**6, extra)
     return X, Y
 
 def run_once(model="gaussian", p=250, n1=80, n2=80, rho=0.30, block=20, seed=0, extra=None):
@@ -75,7 +82,7 @@ def run_once(model="gaussian", p=250, n1=80, n2=80, rho=0.30, block=20, seed=0, 
     t_start = time.perf_counter()
 
     # data
-    X, Y = _dataset(model, n1, n2, p, rho, block, seed, extra)
+    X, Y = _dataset(model, n1, n2, p, rho, block, seed, extra, x_model=_X_MODEL)
 
     # Fisher baselines
     R1 = np.corrcoef(X, rowvar=False)
@@ -87,7 +94,8 @@ def run_once(model="gaussian", p=250, n1=80, n2=80, rho=0.30, block=20, seed=0, 
     truth  = truth_mask_block(p, block)
 
     row = {
-        "model": model, "p": p, "n1": n1, "n2": n2, "rho": rho, "block": block, "seed": seed,
+        "model": model, "x_model": (_X_MODEL or model),
+        "p": p, "n1": n1, "n2": n2, "rho": rho, "block": block, "seed": seed,
         **{f"k_{k}": v for k, v in (extra or {}).items()}
     }
 
@@ -185,15 +193,17 @@ def run_grid():
                         help="comma list for LCT-B, e.g. '50,100'. Default: p=250 -> 100,200,500; else 100.")
     parser.add_argument("--n-jobs", type=int, default=None,
                         help="workers for LCT-B; on Windows prefer 1 to avoid spawn overhead.")
-    # Day-12: defaults toggles
     parser.add_argument("--use-defaults", action="store_true",
                         help="Use results/defaults.json to auto-set (B, coarse_grid, winsorize, var_method) per (p, α).")
     parser.add_argument("--defaults-file", type=str, default="results/defaults.json",
                         help="Path to defaults.json (from scripts/make_defaults.py).")
+    parser.add_argument("--x-model", type=str, default=None,
+                        help="Marginal for group X. Default: same as the grid's model.")
     args = parser.parse_args()
 
     # set globals for run_once
-    global _SKIP_LCTB, _B_LIST, _N_JOBS, _USE_DEFAULTS, _DEFAULTS_FILE
+    global _SKIP_LCTB, _B_LIST, _N_JOBS, _USE_DEFAULTS, _DEFAULTS_FILE, _X_MODEL
+    _X_MODEL = args.x_model
     _SKIP_LCTB = args.skip_lctb
     _B_LIST = None if args.B_list is None else [int(x) for x in args.B_list.split(",") if x.strip()]
     win = (os.name == "nt")
