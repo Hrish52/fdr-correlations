@@ -1,0 +1,4 @@
+model,x_model,p,n1,n2,seed,t_lct_0.05,R_lct_0.05,fdp_lct_0.05,any_reject_lct_0.05,R_over_M_lct_0.05,t_lct_0.10,R_lct_0.10,fdp_lct_0.10,any_reject_lct_0.10,R_over_M_lct_0.10,t_lctb_0.05_B50,R_lctb_0.05_B50,fdp_lctb_0.05_B50,any_reject_lctb_0.05_B50,R_over_M_lctb_0.05_B50,t_lctb_0.10_B50,R_lctb_0.10_B50,fdp_lctb_0.10_B50,any_reject_lctb_0.10_B50,R_over_M_lctb_0.10_B50,lctb_B50_wall_time_s,wall_time_s
+gaussian,gaussian,100,40,40,0,inf,0,0.0,0,0.0,inf,0,0.0,0,0.0,inf,0,0.0,0,0.0,inf,0,0.0,0,0.0,0.08042950000003657,0.08599019299981592
+gaussian,gaussian,100,40,40,1,inf,0,0.0,0,0.0,inf,0,0.0,0,0.0,inf,0,0.0,0,0.0,inf,0,0.0,0,0.0,0.11062822799999594,0.11490756100010913
+gaussian,gaussian,100,40,40,2,inf,0,0.0,0,0.0,inf,0,0.0,0,0.0,inf,0,0.0,0,0.0,inf,0,0.0,0,0.0,0.07613378799987913,0.08034533299996838
