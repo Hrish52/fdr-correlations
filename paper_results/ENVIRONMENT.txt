@@ -1,0 +1,5 @@
+python 3.12.1
+numpy 2.5.1
+scipy 1.18.0
+pandas 3.0.3
+71390e971972b4dd5b9af165e688fd6b1ec3c533

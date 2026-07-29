@@ -1,0 +1,16 @@
+{
+  "250": {
+    "0.05": {
+      "B": 200,
+      "coarse_grid": null,
+      "winsorize": 5.0,
+      "var_method": "cai_liu"
+    },
+    "0.10": {
+      "B": 200,
+      "coarse_grid": null,
+      "winsorize": 5.0,
+      "var_method": "cai_liu"
+    }
+  }
+}
