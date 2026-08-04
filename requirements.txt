@@ -13,3 +13,6 @@ ipykernel>=6.25
 
 # Testing
 pytest>=7.4
+
+# Real-data experiment
+nilearn>=0.14
